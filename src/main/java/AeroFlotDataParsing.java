@@ -1,4 +1,5 @@
 import org.openqa.selenium.By;
+import org.openqa.selenium.Keys;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
@@ -35,16 +36,26 @@ public class AeroFlotDataParsing {
      */
     public double getPrice(String departure, String destination, String date) {
         try {
-            // Загрузка страницы поиска
             driver.get(config.getProperty("aeroflot.url"));
 
-            // Заполнение полей и выполнение поиска
-            fillCityField(".departure-field input", departure);
-            fillCityField(".arrival-field input", destination);
-            setDate(".departure-date input", date);
-            driver.findElement(By.cssSelector(".search-button")).click();
+            // Ожидание загрузки основной формы
+            wait.until(ExpectedConditions.presenceOfElementLocated(
+                    By.cssSelector(".main-module__search-form__inner")));
 
-            // Извлечение цены из активной даты
+            // Заполнение полей
+            fillCityField("#ticket-city-departure-0-booking", departure);
+            fillCityField("#ticket-city-arrival-0-booking", destination);
+            setDate("#ticket-date-from-booking", date);
+
+            // Клик по кнопке поиска
+            WebElement searchButton = wait.until(ExpectedConditions.elementToBeClickable(
+                    By.cssSelector("button.main-module__button--lg")));
+            searchButton.click();
+
+            // Ожидание загрузки результатов
+            wait.until(ExpectedConditions.presenceOfElementLocated(
+                    By.cssSelector(".price-chart")));
+
             return extractActivePrice();
         } catch (Exception e) {
             throw new RuntimeException("Ошибка при получении цены: " + e.getMessage());
@@ -58,10 +69,17 @@ public class AeroFlotDataParsing {
      */
     private void fillCityField(String selector, String value) {
         WebElement field = wait.until(ExpectedConditions.elementToBeClickable(By.cssSelector(selector)));
-        field.clear();
+        field.sendKeys(Keys.CONTROL + "a");
+        field.sendKeys(Keys.DELETE);
         field.sendKeys(value);
-        // Выбор первого предложения из выпадающего списка
-        wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector(".suggestion-item"))).click();
+
+        // Ожидание появления подсказки с точным совпадением города
+        By suggestionLocator = By.xpath(String.format(
+                "//div[contains(@class, 'suggestion-item') and .//*[contains(text(), '%s')]]",
+                value
+        ));
+        WebElement suggestion = wait.until(ExpectedConditions.elementToBeClickable(suggestionLocator));
+        suggestion.click();
     }
 
     /**
@@ -70,8 +88,17 @@ public class AeroFlotDataParsing {
      * @param date - дата в формате ДД.ММ.ГГГГ
      */
     private void setDate(String selector, String date) {
-        WebElement dateField = driver.findElement(By.cssSelector(selector));
+        WebElement dateField = wait.until(ExpectedConditions.elementToBeClickable(By.cssSelector(selector)));
+        dateField.click(); // Активируем календарь
+
+        // Ожидание загрузки календаря
+        wait.until(ExpectedConditions.presenceOfElementLocated(
+                By.cssSelector(".pika-single")
+        ));
+
+        dateField.sendKeys(Keys.CONTROL + "a");
         dateField.sendKeys(date);
+        dateField.sendKeys(Keys.ENTER);
     }
 
     /**
@@ -79,22 +106,21 @@ public class AeroFlotDataParsing {
      * @return числовое значение цены
      */
     private double extractActivePrice() {
-        // Ожидание появления элемента с ценой
+        // Обновленный XPath с учетом новой структуры
         WebElement priceElement = wait.until(ExpectedConditions.presenceOfElementLocated(
-                By.xpath("//div[contains(@class, 'price-chart__item--active')]//div[contains(@class, 'price-chart__item-price')]")
-        ));
+                By.xpath("//div[contains(@class, 'price-chart__item--active')]//div[contains(@class, 'price-chart__item-price')]")));
         return parsePrice(priceElement.getText());
     }
 
     /**
      * Преобразование текстового представления цены в число
-     * @param priceText - строка с ценой (например: "16 723 ₽")
+     * @param priceText - строка с ценой (например: "25 901 a")
      * @return числовое значение цены
      */
     private double parsePrice(String priceText) {
         return Double.parseDouble(priceText
                 .replaceAll("[^\\d]", "") // Удаление всех нецифровых символов
-                .replace("₽", "")
+                .replaceAll("\\s+", "")   // Удаление неразрывных пробелов (nbsp)
                 .trim()
         );
     }
